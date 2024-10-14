@@ -31,5 +31,9 @@
     "prettier": "^3.3.3",
     "roblox-ts": "^3.0.0",
     "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@rbxts/simpleinput": "file:rbxts-simpleinput-1.0.0.tgz",
+    "@rbxts/simpletimer": "file:rbxts-simpletimer-1.0.0.tgz"
   }
 }
