@@ -21,6 +21,15 @@ type ActorEntries = {
 };
 type ActorRegistry = Map<Model, ActorEntries>;
 
+type Skill = {
+	Name: string;
+	CastTime: number;
+	CooldownTime: number;
+	Cast: (entries: ActorEntries) => void;
+};
+
+type SkillRegistry = Map<string, Skill>;
+
 class DCS {
 	// Actors
 	private Actors: ActorRegistry = new Map();
@@ -77,6 +86,13 @@ class DCS {
 			},
 			CastSkill: (skillName: string) => {
 				// Cast the skill on the actor
+				const actor = this.GetActor(sentActor);
+				if (!actor) return;
+
+				const skill = this.SkillRegistry.get(skillName.lower());
+				if (skill) {
+					skill.Cast(actor);
+				} else warn(`${skillName} not found`);
 			},
 		});
 	}
@@ -126,6 +142,27 @@ class DCS {
 
 	GetStatusEffect(statusEffectName: string): StatusEffect | undefined {
 		return this.StatusEffectRegistry.get(statusEffectName);
+	}
+
+	// Skills
+	private SkillRegistry: SkillRegistry = new Map();
+
+	// Methods
+	CreateSkill(name: string, skill: (entries: ActorEntries) => void): Skill {
+		return {
+			Name: name,
+			CastTime: 0,
+			CooldownTime: 0,
+			Cast: skill,
+		};
+	}
+
+	RegisterSkill(skill: Skill): void {
+		this.SkillRegistry.set(skill.Name.lower(), skill);
+	}
+
+	RemoveSkill(skillName: string): void {
+		this.SkillRegistry.delete(skillName.lower());
 	}
 }
 
