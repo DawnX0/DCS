@@ -1,169 +1,198 @@
 import SimpleTimer from "@rbxts/simpletimer";
 
-type StatusEffect = {
-	Name: string;
-	Duration: number;
-	Tick: number;
-	Effect: (entries: ActorEntries) => void;
-};
+const UNIQUE_ACTOR_ID = "__DCS";
 
-type StatusEffectRegistry = Map<string, StatusEffect>;
-
-type ActorEntries = {
-	Name: string;
+type ACTOR_ENTRIES_TYPE = {
 	Model: Model;
 	StatusEffects: Map<string, ReturnType<(typeof SimpleTimer)["CreateTimer"]>>;
+	Cooldowns: Map<string, boolean>;
 
 	ApplyStatusEffect: (statusEffectName: string) => void;
 	RemoveStatusEffect: (statusEffectName: string) => void;
-
 	CastSkill: (skillName: string) => void;
+	StopSkill: (skillName: string) => void;
 };
-type ActorRegistry = Map<Model, ActorEntries>;
+type ACTOR_REGISTRY_TYPE = Map<string, ACTOR_ENTRIES_TYPE>;
 
-type Skill = {
+type STATUSEFFECT_TYPE = {
+	Name: string;
+	Duration: number;
+	Tick: number;
+	Effect: (entries: ACTOR_ENTRIES_TYPE) => void;
+};
+
+type STATUSEFFECT_REGISTRY_TYPE = Map<string, STATUSEFFECT_TYPE>;
+
+type SKILL_TYPE = {
 	Name: string;
 	CastTime: number;
-	CooldownTime: number;
-	Cast: (entries: ActorEntries) => void;
+	Cooldown: number;
+	Cast: (entries: ACTOR_ENTRIES_TYPE) => void;
 };
 
-type SkillRegistry = Map<string, Skill>;
+type SKILL_REGISTRY_TYPE = Map<string, SKILL_TYPE>;
+
+type WEAPON_TYPE = {
+	Name: string;
+	Model?: Model;
+	Skills?: SKILL_TYPE[];
+	Projectile?: Model;
+};
 
 class DCS {
-	// Actors
-	private Actors: ActorRegistry = new Map();
+	// ACTORS ----------------------------------------------------------------------------------------------------- \\
 
-	// Methods
-	AddActor(sentActor: Model) {
-		if (!sentActor.FindFirstChildWhichIsA("Humanoid") || !sentActor.FindFirstChild("HumanoidRootPart")) return;
+	private ActorRegistry: ACTOR_REGISTRY_TYPE = new Map();
 
-		sentActor.AncestryChanged.Once((child) => {
-			const actorEntries = this.Actors.get(sentActor);
-			if (!actorEntries) return;
-
-			// Remove the actor from the actors registry
-			this.Actors.delete(sentActor);
-		});
-
-		this.Actors.set(sentActor, {
-			Name: sentActor.Name,
-			Model: sentActor,
+	AddActor(newActor: Model) {
+		const newEntries: ACTOR_ENTRIES_TYPE = {
+			Model: newActor,
 			StatusEffects: new Map(),
+			Cooldowns: new Map(),
 
 			ApplyStatusEffect: (statusEffectName: string) => {
-				const actor = this.GetActor(sentActor);
-				if (!actor) return;
+				const actor = this.GetActor(newActor);
+				if (actor) {
+					const statusEffect = this.GetStatusEffect(statusEffectName);
+					if (statusEffect) {
+						const statusEffectTimer = SimpleTimer.CreateTimer(
+							statusEffect.Name,
+							statusEffect.Duration,
+							statusEffect.Tick,
+							true,
+						);
 
-				// Apply the status effect to the actor
-				const statusEffect = this.GetStatusEffect(statusEffectName.lower());
-				if (statusEffect) {
-					const effectTimer = SimpleTimer.CreateTimer(
-						statusEffect.Name,
-						statusEffect.Duration,
-						statusEffect.Tick,
-						true,
-					);
+						statusEffectTimer.onTick.Event.Once(() => statusEffect.Effect(actor));
+						actor.StatusEffects.set(statusEffect.Name.lower(), statusEffectTimer);
 
-					effectTimer.onTick.Event.Connect(() => statusEffect.Effect(actor));
-					actor.StatusEffects.set(statusEffectName.lower(), effectTimer);
-					effectTimer.Start();
-				} else warn(`${statusEffectName} was not found within the registered status effects`);
-
-				print(actor.StatusEffects);
-			},
-			RemoveStatusEffect: (statusEffectName: string) => {
-				// Remove the status effect from the actor
-				const actor = this.GetActor(sentActor);
-				if (!actor) return;
-
-				const effectTimer = actor.StatusEffects.get(statusEffectName.lower());
-				if (effectTimer) {
-					effectTimer.Destroy();
+						statusEffectTimer.Start();
+					}
 				}
-				actor.StatusEffects.delete(statusEffectName);
-				print(actor.StatusEffects);
 			},
+
+			RemoveStatusEffect: (statusEffectName: string) => {
+				const actor = this.GetActor(newActor);
+				if (actor) {
+					const statusEffectTimer = actor.StatusEffects.get(statusEffectName.lower());
+					if (statusEffectTimer) {
+						statusEffectTimer.Destroy();
+						actor.StatusEffects.delete(statusEffectName.lower());
+					}
+				}
+			},
+
 			CastSkill: (skillName: string) => {
-				// Cast the skill on the actor
-				const actor = this.GetActor(sentActor);
-				if (!actor) return;
+				const actor = this.GetActor(newActor);
+				if (actor) {
+					const skill = this.GetSkill(skillName);
+					if (skill) {
+						if (!actor.Cooldowns.get(skill.Name.lower())) {
+							actor.Cooldowns.set(skill.Name.lower(), true);
 
-				const skill = this.SkillRegistry.get(skillName.lower());
-				if (skill) {
-					skill.Cast(actor);
-				} else warn(`${skillName} not found`);
+							SimpleTimer.CreateTimer(skill.Name, skill.CastTime, 0, false).onTick.Event.Once(() => {
+								skill.Cast(actor);
+								actor.Cooldowns.delete(skill.Name.lower());
+							});
+
+							skill.Cast(actor);
+						}
+					}
+				}
 			},
+
+			StopSkill: (skillName: string) => {},
+		};
+
+		newActor.AncestryChanged.Connect(() => {
+			this.RemoveActor(newActor);
 		});
+
+		newActor.FindFirstChildWhichIsA("Humanoid")?.Died.Once(() => this.RemoveActor(newActor));
+
+		this.ActorRegistry.set(newActor.Name.lower() + UNIQUE_ACTOR_ID, newEntries);
 	}
 
-	RemoveActor(actor: Model) {
-		this.Actors.delete(actor);
+	RemoveActor(sentActor: Model): void {
+		this.ActorRegistry.delete(sentActor.Name.lower() + UNIQUE_ACTOR_ID);
 	}
 
-	GetActor(actor: Model): ActorEntries | undefined {
-		return this.Actors.get(actor);
+	GetActor(sentActor: Model): ACTOR_ENTRIES_TYPE | undefined {
+		return this.ActorRegistry.get(sentActor.Name.lower() + UNIQUE_ACTOR_ID);
 	}
 
-	// Status Effects
-	private StatusEffectRegistry: StatusEffectRegistry = new Map();
+	// STATUS EFFECTS --------------------------------------------------------------------------------------------- \\
 
-	// Methods
-	CreateStatusEffect(
-		name: string,
-		duration: number,
-		tick: number,
-		effect: (entries: ActorEntries) => void,
-	): StatusEffect {
-		return {
-			Name: name,
-			Duration: duration,
-			Tick: tick,
-			Effect: (entries: ActorEntries) => effect(entries),
-		};
+	private StatusEffectRegistry: STATUSEFFECT_REGISTRY_TYPE = new Map();
+
+	CreateStatusEffect(statusEffect: STATUSEFFECT_TYPE): STATUSEFFECT_TYPE {
+		return statusEffect;
 	}
 
-	CopyStatusEffect(statusEffect: StatusEffect): StatusEffect {
-		return {
-			Name: statusEffect.Name,
-			Duration: statusEffect.Duration,
-			Tick: statusEffect.Tick,
-			Effect: statusEffect.Effect,
-		};
-	}
-
-	AddStatusEffect(statusEffect: StatusEffect) {
+	AddStatusEffect(statusEffect: STATUSEFFECT_TYPE) {
 		this.StatusEffectRegistry.set(statusEffect.Name.lower(), statusEffect);
 	}
 
 	RemoveStatusEffect(statusEffectName: string) {
-		this.StatusEffectRegistry.delete(statusEffectName);
+		this.StatusEffectRegistry.delete(statusEffectName.lower());
 	}
 
-	GetStatusEffect(statusEffectName: string): StatusEffect | undefined {
-		return this.StatusEffectRegistry.get(statusEffectName);
+	RegisterStatusEffects(stausEffects: STATUSEFFECT_TYPE[]) {
+		stausEffects.forEach((statusEffect) => this.AddStatusEffect(statusEffect));
 	}
 
-	// Skills
-	private SkillRegistry: SkillRegistry = new Map();
-
-	// Methods
-	CreateSkill(name: string, skill: (entries: ActorEntries) => void): Skill {
-		return {
-			Name: name,
-			CastTime: 0,
-			CooldownTime: 0,
-			Cast: skill,
-		};
+	GetStatusEffect(statusEffectName: string): STATUSEFFECT_TYPE | undefined {
+		return this.StatusEffectRegistry.get(statusEffectName.lower());
 	}
 
-	RegisterSkill(skill: Skill): void {
+	// SKILLS ----------------------------------------------------------------------------------------------------- \\
+
+	private SkillRegistry: SKILL_REGISTRY_TYPE = new Map();
+
+	CreateSkill(skill: SKILL_TYPE): SKILL_TYPE {
+		return skill;
+	}
+
+	AddSkill(skill: SKILL_TYPE) {
 		this.SkillRegistry.set(skill.Name.lower(), skill);
 	}
 
-	RemoveSkill(skillName: string): void {
+	RemoveSkill(skillName: string) {
 		this.SkillRegistry.delete(skillName.lower());
 	}
+
+	RegisterSkills(skills: SKILL_TYPE[]) {
+		skills.forEach((skill) => this.AddSkill(skill));
+	}
+
+	GetSkill(skillName: string): SKILL_TYPE | undefined {
+		return this.SkillRegistry.get(skillName.lower());
+	}
+
+	// WEAPONS ---------------------------------------------------------------------------------------------------- \\
+
+	private WeaponRegistry: Map<string, WEAPON_TYPE> = new Map();
+
+	CreateWeapon(weapon: WEAPON_TYPE): WEAPON_TYPE {
+		return weapon;
+	}
+
+	AddWeapon(weapon: WEAPON_TYPE) {
+		this.WeaponRegistry.set(weapon.Name.lower(), weapon);
+	}
+
+	RemoveWeapon(weaponName: string) {
+		this.WeaponRegistry.delete(weaponName.lower());
+	}
+
+	RegisterWeapons(weapons: WEAPON_TYPE[]) {
+		weapons.forEach((weapon) => this.AddWeapon(weapon));
+	}
+
+	GetWeapon(weaponName: string): WEAPON_TYPE | undefined {
+		return this.WeaponRegistry.get(weaponName.lower());
+	}
+
+	// ------------------------------------------------------------------------------------------------------------ \\
 }
 
 export default new DCS();
