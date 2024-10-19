@@ -40,6 +40,16 @@ type WEAPON_TYPE = {
 };
 
 class DCS {
+	/**
+	 *
+	 * @remark Created by DawnX0
+	 *
+	 * @remark Last updated on: 10/18/2024
+	 *
+	 * @remark Purpose: To be as simple as possible
+	 *
+	 */
+
 	// ACTORS ----------------------------------------------------------------------------------------------------- \\
 
 	private ActorRegistry: ACTOR_REGISTRY_TYPE = new Map();
